@@ -1,0 +1,37 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build (WSL, silent)",
+            "type": "shell",
+            "command": "wsl.exe",
+            "args": [
+                "-e",
+                "bash",
+                "-lc",
+                "cd /home/zns/code && make -j"
+            ],
+            "problemMatcher": "$gcc",
+            "presentation": {
+                "reveal": "never"
+            }
+        },
+        {
+            "label": "Build+Run (New Blue Window)",
+            "dependsOn": [
+                "Build (WSL, silent)"
+            ],
+            "type": "shell",
+            "command": "cmd.exe",
+            "args": [
+                "/c",
+                "start",
+                "LCX`s terminal",
+                "cmd.exe",
+                "/c",
+                "color 97 && wsl.exe -e bash -lc \"cd /home/zns/code && ./myfs\""
+            ],
+            "problemMatcher": []
+        }
+    ]
+}
