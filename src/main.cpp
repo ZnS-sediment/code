@@ -11,6 +11,7 @@
 
 #include "shell.h"
 #include "file_system.h"
+#include "scheduler.h" // 调度器代码依然保留
 
 namespace
 {
@@ -152,24 +153,30 @@ int main()
         std::cerr << "Background load failed: " << IMG_GetError() << "\n";
 
     // 文件系统 + Shell
-    std::ostringstream initCap;
-    std::streambuf *oldBuf = std::cout.rdbuf(initCap.rdbuf());
     FileSystem fs;
     fs.mount();
-    std::cout.rdbuf(oldBuf);
     Shell shell(&fs);
+    Scheduler scheduler(&shell); // 调度器实例依然创建
 
     // 终端状态
     std::string input_text;
     std::vector<std::unique_ptr<RenderedLine>> logLines;
     std::vector<std::string> history;
-    int history_index = -1;    // -1 当前输入
-    float scrollOffset = 0.0f; // 0 = 底部
+    int history_index = -1;
+    float scrollOffset = 0.0f;
     bool quit = false;
     SDL_Event e;
 
-    // 初始化输出：信息区域（黄色）
+    // 捕获文件系统挂载时的输出
+    std::ostringstream initCap;
+    std::streambuf *oldBuf = std::cout.rdbuf(initCap.rdbuf());
+    fs.mount();
+    std::cout.rdbuf(oldBuf);
     push_output_lines_info(renderer, font, initCap.str(), logLines);
+
+    // 调度器时钟
+    Uint32 last_tick = SDL_GetTicks();
+    const Uint32 TICK_INTERVAL = 500; // 后台模拟的调度速度
 
     SDL_StartTextInput();
 
@@ -203,22 +210,29 @@ int main()
                 }
                 else if (key == SDLK_RETURN || key == SDLK_KP_ENTER)
                 {
-                    // 回显命令（白字）
+                    // 1. 回显输入的命令 (图形界面)
                     std::string prompt = fs.getCurrentPath() + " $ " + input_text;
                     push_output_lines(renderer, font, prompt, logLines);
 
-                    // 执行命令并输出为信息区域（黄色）
-                    std::ostringstream cmdCap;
-                    std::streambuf *bufOld = std::cout.rdbuf(cmdCap.rdbuf());
-                    shell.executeCommandPublic(input_text);
-                    std::cout.rdbuf(bufOld);
-                    push_output_lines_info(renderer, font, cmdCap.str(), logLines);
+                    if (!input_text.empty())
+                    {
+                        // 2. 立即执行命令并获取输出 (图形界面)
+                        std::ostringstream cmdCap;
+                        std::streambuf *bufOld = std::cout.rdbuf(cmdCap.rdbuf());
+                        shell.executeCommandPublic(input_text);
+                        std::cout.rdbuf(bufOld);
+                        push_output_lines_info(renderer, font, cmdCap.str(), logLines);
 
+                        // 3. 将命令添加到后台调度器进行模拟
+                        scheduler.addProcess(input_text);
+                    }
+
+                    // 4. 清理输入框和历史记录
                     if (!input_text.empty() && (history.empty() || history.back() != input_text))
                         history.push_back(input_text);
                     history_index = -1;
                     input_text.clear();
-                    scrollOffset = 0.0f; // 滚到底部
+                    scrollOffset = 0.0f;
                 }
                 else if (key == SDLK_UP)
                 {
@@ -263,7 +277,15 @@ int main()
             // 去掉了鼠标中键/剪贴板的复制粘贴逻辑
         }
 
-        // 渲染
+        // 后台调度器模拟
+        if (SDL_GetTicks() - last_tick > TICK_INTERVAL)
+        {
+            scheduler.tick();
+            last_tick = SDL_GetTicks();
+        }
+
+        // === 渲染部分 ===
+        // (完全恢复到之前的样子，移除所有关于进程状态的绘制代码)
         int w, h;
         SDL_GetWindowSize(window, &w, &h);
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -272,20 +294,16 @@ int main()
         if (background)
             SDL_RenderCopy(renderer, background, nullptr, nullptr);
 
-        // 计算显示范围
+        // 计算并绘制日志区域 (无变化)
         int log_area_height = h - 2 * PADDING - LINE_HEIGHT;
         int maxVisible = std::max(1, log_area_height / LINE_HEIGHT);
         int total = (int)logLines.size();
-
         float maxScroll = std::max(0.0f, (float)(total - maxVisible) * LINE_HEIGHT);
         if (scrollOffset > maxScroll)
             scrollOffset = maxScroll;
-
         int firstLine = total - maxVisible - (int)(scrollOffset / LINE_HEIGHT);
         if (firstLine < 0)
             firstLine = 0;
-
-        // 绘制日志
         for (int i = 0; i < maxVisible + 1; ++i)
         {
             int idx = firstLine + i;
@@ -299,11 +317,10 @@ int main()
             }
         }
 
-        // 绘制输入行（路径 + 提示）
+        // 绘制输入行 (无变化)
         std::string prompt_text = fs.getCurrentPath() + " $ ";
-        auto promptRl = render_text(renderer, font, prompt_text); // 白字
-        auto inputRl = render_text(renderer, font, input_text);   // 白字
-
+        auto promptRl = render_text(renderer, font, prompt_text);
+        auto inputRl = render_text(renderer, font, input_text);
         int input_y = h - PADDING - LINE_HEIGHT;
         if (promptRl && promptRl->texture)
         {
@@ -316,7 +333,7 @@ int main()
             SDL_RenderCopy(renderer, inputRl->texture, nullptr, &dst);
         }
 
-        // 光标
+        // 绘制光标 (无变化)
         if ((SDL_GetTicks() / 500) % 2 == 0)
         {
             int cx = PADDING + (promptRl ? promptRl->width : 0) + (inputRl ? inputRl->width : 0);
